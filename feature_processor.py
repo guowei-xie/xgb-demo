@@ -1,12 +1,11 @@
 """
 特征处理模块
 包含数据预处理、特征工程等功能
+适配实际数据：保留缺失值，XGBoost兼容的特征处理
 """
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.model_selection import train_test_split
-from typing import Tuple, Dict, List
+from typing import Tuple, List
 import joblib
 import os
 
@@ -15,43 +14,14 @@ class FeatureProcessor:
     """特征处理器类"""
     
     def __init__(self):
-        """初始化特征处理器"""
-        self.label_encoders: Dict[str, LabelEncoder] = {}
-        self.scaler = StandardScaler()
+        """
+        初始化特征处理器
+        注意：XGBoost可以处理类别特征和缺失值，因此不需要标准化和编码
+        """
         self.feature_columns: List[str] = []
         self.is_fitted = False
-    
-    def encode_categorical_features(self, df: pd.DataFrame, 
-                                   categorical_cols: List[str]) -> pd.DataFrame:
-        """
-        对分类特征进行编码
-        
-        Args:
-            df: 输入DataFrame
-            categorical_cols: 分类特征列名列表
-            
-        Returns:
-            编码后的DataFrame
-        """
-        df_encoded = df.copy()
-        
-        for col in categorical_cols:
-            if col in df.columns:
-                if col not in self.label_encoders:
-                    self.label_encoders[col] = LabelEncoder()
-                    df_encoded[col] = self.label_encoders[col].fit_transform(df[col])
-                else:
-                    # 处理训练时未见过的类别
-                    known_classes = set(self.label_encoders[col].classes_)
-                    unknown_mask = ~df[col].isin(known_classes)
-                    if unknown_mask.any():
-                        # 将未知类别映射为最常见的类别
-                        df_encoded.loc[unknown_mask, col] = 0
-                    df_encoded[col] = self.label_encoders[col].transform(
-                        df[col].where(~unknown_mask, df[col].mode()[0] if len(df[col].mode()) > 0 else df[col].iloc[0])
-                    )
-        
-        return df_encoded
+        # 保存类别特征的CategoricalDtype，用于确保训练和预测时使用相同的类别定义
+        self.categorical_dtypes: dict = {}
     
     def create_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -64,72 +34,106 @@ class FeatureProcessor:
             包含新特征的DataFrame
         """
         df_featured = df.copy()
-        
-        # 房价收入比
-        df_featured['price_income_ratio'] = df_featured['house_price'] / (df_featured['income'] + 1)
-        
-        # 年龄与教育年限的交互
-        df_featured['age_education_ratio'] = df_featured['age'] / (df_featured['education_years'] + 1)
-        
-        # 访问频率（访问次数/距离上次访问天数）
-        df_featured['visit_frequency'] = df_featured['visit_count'] / (df_featured['last_visit_days'] + 1)
-        
-        # 房价对数变换
-        df_featured['house_price_log'] = np.log1p(df_featured['house_price'])
-        
-        # 收入对数变换
-        df_featured['income_log'] = np.log1p(df_featured['income'])
-        
-        # 家庭人均收入
-        df_featured['income_per_person'] = df_featured['income'] / df_featured['family_size']
-        
+
+        feature_recipes = [
+            (['house_price'], 'house_price_log', lambda data: data['house_price'].apply(
+                lambda x: np.log1p(x) if pd.notna(x) else np.nan
+            )),
+            (
+                ['city_score', 'house_price'],
+                'city_score_house_price_ratio',
+                lambda data: data['city_score'] / (data['house_price'] + 1),
+            ),
+            (
+                ['fns_cnt', 'grade'],
+                'fns_cnt_per_grade',
+                lambda data: data['fns_cnt'] / (data['grade'] + 1),
+            ),
+            (
+                ['is_enable', 'fns_cnt'],
+                'is_enable_fns_interaction',
+                lambda data: data['is_enable'] * data['fns_cnt'],
+            ),
+            (
+                ['refresh_num', 'fns_cnt'],
+                'refresh_fns_interaction',
+                lambda data: data['refresh_num'] * data['fns_cnt'],
+            ),
+        ]
+
+        for required_cols, new_col, builder in feature_recipes:
+            if all(col in df_featured.columns for col in required_cols):
+                df_featured[new_col] = builder(df_featured)
+
         return df_featured
     
-    def fit_transform(self, df: pd.DataFrame, target_col: str = 'is_enrolled',
-                     categorical_cols: List[str] = None) -> Tuple[pd.DataFrame, pd.Series]:
+    def prepare_features(self, df: pd.DataFrame, target_col: str = 'is_renewal') -> Tuple[pd.DataFrame, pd.Series]:
+        """
+        准备特征数据（保留缺失值，不进行编码和标准化）
+        将类别特征转换为category类型，以便XGBoost自动识别
+        
+        Args:
+            df: 输入DataFrame
+            target_col: 目标列名
+            
+        Returns:
+            处理后的特征DataFrame和目标Series
+        """
+        # 创建新特征
+        df_processed = self.create_features(df)
+        
+        # 选择特征列（排除目标列、ID列和其他非特征列）
+        exclude_cols = [
+            target_col, 
+            'user_id', 
+            'b2c_term_name',  # 学期名称，非特征
+            'l1_term_name',   # 学期名称，非特征
+            'l1_term_renewal_end_date'  # 日期字段，非特征
+        ]
+        
+        # 获取所有特征列
+        all_feature_cols = [col for col in df_processed.columns 
+                           if col not in exclude_cols]
+        
+        # 如果尚未拟合，保存特征列列表
+        if not self.is_fitted:
+            self.feature_columns = all_feature_cols
+        
+        # 选择特征列（确保列顺序一致）
+        X = df_processed[self.feature_columns].copy()
+        
+        X = self._apply_categorical_types(X)
+        X = self._sanitize_numeric(X)
+        
+        # 提取目标变量
+        y = df[target_col] if target_col in df.columns else None
+        
+        return X, y
+    
+    def fit_transform(self, df: pd.DataFrame, target_col: str = 'is_renewal') -> Tuple[pd.DataFrame, pd.Series]:
         """
         拟合并转换训练数据
         
         Args:
             df: 输入DataFrame
             target_col: 目标列名
-            categorical_cols: 分类特征列名列表
             
         Returns:
             处理后的特征DataFrame和目标Series
         """
-        if categorical_cols is None:
-            categorical_cols = ['city', 'grade']
-        
-        # 创建新特征
-        df_processed = self.create_features(df)
-        
-        # 编码分类特征
-        df_encoded = self.encode_categorical_features(df_processed, categorical_cols)
-        
-        # 选择特征列（排除目标列和ID列）
-        exclude_cols = [target_col, 'user_id']
-        self.feature_columns = [col for col in df_encoded.columns 
-                               if col not in exclude_cols]
-        
-        X = df_encoded[self.feature_columns].copy()
-        y = df[target_col]
-        
-        # 标准化数值特征
-        numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-        X[numeric_cols] = self.scaler.fit_transform(X[numeric_cols])
+        X, y = self.prepare_features(df, target_col)
         
         self.is_fitted = True
         
         return X, y
     
-    def transform(self, df: pd.DataFrame, target_col: str = 'is_enrolled') -> pd.DataFrame:
+    def transform(self, df: pd.DataFrame, target_col: str = 'is_renewal') -> pd.DataFrame:
         """
-        转换新数据（使用已拟合的转换器）
+        转换新数据（使用已拟合的特征列）
         
         Args:
             df: 输入DataFrame
-            target_col: 目标列名（如果存在）
+            target_col: 目标列名（如果存在，仅用于排除）
             
         Returns:
             处理后的特征DataFrame
@@ -140,45 +144,20 @@ class FeatureProcessor:
         # 创建新特征
         df_processed = self.create_features(df)
         
-        # 编码分类特征
-        categorical_cols = list(self.label_encoders.keys())
-        df_encoded = self.encode_categorical_features(df_processed, categorical_cols)
+        # 选择特征列（使用已保存的特征列列表）
+        X = df_processed[self.feature_columns].copy()
         
-        # 选择特征列
-        X = df_encoded[self.feature_columns].copy()
+        # 如果某些特征列在新数据中不存在，添加缺失值列
+        missing_cols = set(self.feature_columns) - set(X.columns)
+        for col in missing_cols:
+            X[col] = np.nan
         
-        # 标准化数值特征
-        numeric_cols = X.select_dtypes(include=[np.number]).columns.tolist()
-        X[numeric_cols] = self.scaler.transform(X[numeric_cols])
+        # 确保列顺序一致
+        X = X[self.feature_columns]
         
+        X = self._apply_categorical_types(X)
+        X = self._sanitize_numeric(X)
         return X
-    
-    def split_data(self, X: pd.DataFrame, y: pd.Series, 
-                  test_size: float = 0.2, random_state: int = 42, 
-                  return_indices: bool = False) -> Tuple:
-        """
-        划分训练集和测试集
-        
-        Args:
-            X: 特征DataFrame
-            y: 目标Series
-            test_size: 测试集比例
-            random_state: 随机种子
-            return_indices: 是否返回测试集索引
-            
-        Returns:
-            (X_train, X_test, y_train, y_test) 或 (X_train, X_test, y_train, y_test, test_indices)
-        """
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state, stratify=y
-        )
-        
-        if return_indices:
-            # 返回测试集的原始索引
-            test_indices = X_test.index
-            return X_train, X_test, y_train, y_test, test_indices
-        else:
-            return X_train, X_test, y_train, y_test
     
     def save(self, filepath: str = 'models/feature_processor.pkl'):
         """
@@ -204,28 +183,38 @@ class FeatureProcessor:
         """
         return joblib.load(filepath)
 
+    def _apply_categorical_types(self, X: pd.DataFrame) -> pd.DataFrame:
+        """
+        设置类别特征的dtype，确保训练与预测阶段一致。
+        """
+        categorical_features = ['city', 'district', 'city_level', 'device']
+        for col in categorical_features:
+            if col not in X.columns:
+                continue
+            if X[col].dtype == 'object':
+                if not self.is_fitted:
+                    unique_cats = X[col].dropna().unique().tolist()
+                    cat_dtype = pd.CategoricalDtype(categories=unique_cats, ordered=False)
+                    self.categorical_dtypes[col] = cat_dtype
+                    X[col] = X[col].astype(cat_dtype)
+                else:
+                    if col in self.categorical_dtypes:
+                        known_dtype = self.categorical_dtypes[col]
+                        X[col] = X[col].astype(known_dtype)
+                    else:
+                        X[col] = X[col].astype('category')
+            elif X[col].dtype.name == 'category' and col in self.categorical_dtypes:
+                X[col] = X[col].astype(self.categorical_dtypes[col])
+        return X
 
-if __name__ == '__main__':
-    # 测试特征处理器
-    from data_generator import generate_mock_data
-    
-    print("生成测试数据...")
-    df = generate_mock_data(n_samples=1000)
-    
-    print("\n初始化特征处理器...")
-    processor = FeatureProcessor()
-    
-    print("处理特征...")
-    X, y = processor.fit_transform(df)
-    
-    print(f"\n特征形状: {X.shape}")
-    print(f"目标形状: {y.shape}")
-    print(f"\n特征列: {X.columns.tolist()}")
-    print(f"\n特征预览:")
-    print(X.head())
-    
-    print("\n划分数据集...")
-    X_train, X_test, y_train, y_test = processor.split_data(X, y)
-    print(f"训练集大小: {X_train.shape}")
-    print(f"测试集大小: {X_test.shape}")
-
+    def _sanitize_numeric(self, X: pd.DataFrame) -> pd.DataFrame:
+        """
+        统一处理数值特征中的正负无穷值。
+        """
+        numeric_cols = X.select_dtypes(include=[np.number]).columns
+        for col in numeric_cols:
+            if np.isinf(X[col]).any():
+                inf_count = np.isinf(X[col]).sum()
+                print(f"警告: 特征 {col} 包含 {inf_count} 个inf值，将替换为NaN")
+                X[col] = X[col].replace([np.inf, -np.inf], np.nan)
+        return X

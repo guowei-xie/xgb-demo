@@ -1,78 +1,69 @@
 """
 XGBoost模型训练主程序
-演示完整的机器学习流程：数据生成 -> 特征处理 -> 模型训练 -> 效果分析
+演示完整的机器学习流程：数据读取 -> 特征处理 -> 模型训练 -> 效果分析
 """
 import os
-import sys
-from data_generator import generate_mock_data, save_data
 from feature_processor import FeatureProcessor
 from model_trainer import ModelTrainer
-from analyzer import ModelAnalyzer
+from config import (
+    DATA_PATH,
+    PROCESSOR_PATH,
+    MODEL_PATH,
+    TARGET_COLUMN,
+    TEST_SIZE,
+    RANDOM_STATE,
+    MODEL_PARAMS,
+    EARLY_STOPPING_ROUNDS,
+    TRAIN_TEST_PREDICTIONS,
+)
+from pipeline_utils import load_dataset, log_basic_stats, split_dataset
 
 
 def main():
     """主函数：执行完整的模型训练流程"""
     print("="*60)
-    print("XGBoost用户报名率预测模型训练")
+    print("XGBoost用户续报率预测模型训练")
     print("="*60)
     
-    # 步骤1: 生成MOCK数据
-    print("\n【步骤1】生成MOCK用户数据...")
+    print("\n【步骤1】读取实际数据...")
     print("-" * 60)
-    df = generate_mock_data(n_samples=10000, random_state=42)
-    print(f"✓ 数据生成完成，共 {len(df)} 条记录")
-    print(f"✓ 报名率: {df['is_enrolled'].mean():.2%}")
-    print(f"✓ 数据列: {', '.join(df.columns.tolist())}")
-    
-    # 保存原始数据
-    save_data(df, 'data/mock_data.csv')
+    df = load_dataset(DATA_PATH)
+    log_basic_stats(df, TARGET_COLUMN)
     
     # 步骤2: 特征处理
     print("\n【步骤2】特征处理与工程...")
     print("-" * 60)
     processor = FeatureProcessor()
-    X, y = processor.fit_transform(df)
+    X, y = processor.fit_transform(df, target_col=TARGET_COLUMN)
     print(f"✓ 特征处理完成")
     print(f"✓ 特征数量: {X.shape[1]}")
     print(f"✓ 特征列表: {', '.join(X.columns.tolist()[:10])}...")
     
-    # 划分训练集和测试集（获取测试集索引以便关联原始数据）
-    X_train, X_test, y_train, y_test, test_indices = processor.split_data(
-        X, y, test_size=0.2, return_indices=True
+    X_train, X_test, y_train, y_test = split_dataset(
+        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE
     )
     print(f"✓ 数据集划分完成")
-    print(f"  - 训练集: {X_train.shape[0]} 条")
-    print(f"  - 测试集: {X_test.shape[0]} 条")
+    print(f"  - 训练集: {X_train.shape[0]} 条 (续报率: {y_train.mean():.2%})")
+    print(f"  - 测试集: {X_test.shape[0]} 条 (续报率: {y_test.mean():.2%})")
     
     # 保存特征处理器
-    processor.save('models/feature_processor.pkl')
+    processor.save(str(PROCESSOR_PATH))
     
     # 步骤3: 模型训练
     print("\n【步骤3】XGBoost模型训练...")
     print("-" * 60)
     
-    # 设置模型参数
-    model_params = {
-        'objective': 'binary:logistic',
-        'eval_metric': 'auc',
-        'max_depth': 6,
-        'learning_rate': 0.1,
-        'n_estimators': 200,
-        'subsample': 0.8,
-        'colsample_bytree': 0.8,
-        'min_child_weight': 3,
-        'gamma': 0.1,
-        'reg_alpha': 0.1,
-        'reg_lambda': 1.0,
-        'random_state': 42,
-        'n_jobs': -1
-    }
-    
-    trainer = ModelTrainer(params=model_params)
-    trainer.train(X_train, y_train, X_test, y_test, early_stopping_rounds=20)
+    trainer = ModelTrainer(params=MODEL_PARAMS)
+    trainer.train(
+        X_train,
+        y_train,
+        X_test,
+        y_test,
+        early_stopping_rounds=EARLY_STOPPING_ROUNDS,
+    )
     
     # 保存模型
-    trainer.save('models/xgb_model.pkl')
+    trainer.save(str(MODEL_PATH))
     
     # 步骤4: 模型评估
     print("\n【步骤4】模型性能评估...")
@@ -81,41 +72,39 @@ def main():
     trainer.print_evaluation_report(X_test, y_test, "测试集")
     
     # 显示特征重要性
-    print("\n特征重要性 Top 10:")
-    print(trainer.get_feature_importance(10).to_string(index=False))
+    print("\n特征重要性 Top 15:")
+    print(trainer.get_feature_importance(15).to_string(index=False))
     
-    # 步骤5: 效果分析与可视化
-    print("\n【步骤5】生成效果分析报告...")
+    # 步骤5: 保存测试集预测结果
+    print("\n【步骤5】保存测试集预测结果...")
     print("-" * 60)
-    analyzer = ModelAnalyzer(output_dir='results')
-    analyzer.generate_full_report(
-        trainer=trainer,
-        processor=processor,
-        X_train=X_train,
-        y_train=y_train,
-        X_test=X_test,
-        y_test=y_test,
-        df_original=df,
-        test_indices=test_indices
-    )
     
-    # 总结
+    # 获取预测结果
+    test_indices = X_test.index
+    y_test_proba = trainer.predict_proba(X_test)
+    y_test_pred = trainer.predict(X_test)
+    
+    # 从原始数据中提取测试集对应的行
+    test_df_original = df.loc[test_indices].copy()
+    
+    # 合并预测结果（格式与predict_test.py一致）
+    result_df = test_df_original.copy()
+    result_df["pred_probability"] = y_test_proba
+    result_df["pred_label"] = y_test_pred
+    
+    # 保存到results目录
+    os.makedirs(TRAIN_TEST_PREDICTIONS.parent, exist_ok=True)
+    result_df.to_csv(TRAIN_TEST_PREDICTIONS, index=False)
+    print(f"✓ 测试集预测结果已保存到: {TRAIN_TEST_PREDICTIONS}")
+    print(f"  - 共 {len(result_df)} 条记录")
+    
     print("\n" + "="*60)
     print("模型训练流程完成！")
     print("="*60)
-    print("\n生成的文件:")
-    print("  - 数据文件: data/mock_data.csv")
-    print("  - 特征处理器: models/feature_processor.pkl")
-    print("  - 训练模型: models/xgb_model.pkl")
-    print("  - 分析图表: results/ 目录下")
-    print("\n主要分析图表:")
-    print("  - feature_importance.png: 特征重要性")
-    print("  - roc_curve.png: ROC曲线")
-    print("  - precision_recall_curve.png: PR曲线")
-    print("  - confusion_matrix.png: 混淆矩阵")
-    print("  - prediction_distribution.png: 预测概率分布")
-    print("  - data_exploration.png: 数据探索分析")
-    print("  - test_predictions.csv: 测试集预测结果表格")
+    print("\n输出摘要:")
+    print(f"  - 特征处理器: {PROCESSOR_PATH}")
+    print(f"  - 训练模型: {MODEL_PATH}")
+    print(f"  - 测试集预测结果: {TRAIN_TEST_PREDICTIONS}")
     print("="*60)
 
 

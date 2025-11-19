@@ -6,13 +6,15 @@
 
 ```
 xgb_demo/
-├── data_generator.py      # 数据生成模块（生成MOCK用户数据）
+├── config.py              # 全局配置（路径、参数、阈值等）
+├── pipeline_utils.py      # 训练流程通用工具
 ├── feature_processor.py   # 特征处理模块（数据预处理和特征工程）
 ├── model_trainer.py       # 模型训练模块（XGBoost训练和评估）
-├── analyzer.py            # 效果分析模块（可视化分析）
+├── data_generator.py      # 可选：生成MOCK用户数据
 ├── main.py                # 主程序入口
+├── predict_test.py        # 使用已训练模型对测试集推理
 ├── requirements.txt       # 项目依赖
-└── README.md             # 项目说明文档
+└── README.md              # 项目说明文档
 ```
 
 ## 功能特性
@@ -23,24 +25,15 @@ xgb_demo/
 - 标签：是否报名（基于特征的概率分布生成）
 
 ### 2. 特征处理 (`feature_processor.py`)
-- 分类特征编码（Label Encoding）
-- 特征工程（创建新特征，如房价收入比、访问频率等）
-- 数值特征标准化
-- 训练集/测试集划分
+- 动态创建常用交互/非线性特征（如 `house_price_log`、完课/年级组合等）
+- 自动记录类别特征取值，并在推理阶段保持一致
+- 清理 inf 值，保留 NaN 以充分利用 XGBoost 对缺失的原生支持
 
 ### 3. 模型训练 (`model_trainer.py`)
 - XGBoost 二分类模型训练
 - 模型评估（准确率、精确率、召回率、F1分数、ROC-AUC）
 - 特征重要性分析
 - 模型保存和加载
-
-### 4. 效果分析 (`analyzer.py`)
-- 特征重要性可视化
-- ROC曲线
-- 精确率-召回率曲线
-- 混淆矩阵热力图
-- 预测概率分布
-- 数据探索性分析
 
 ## 安装依赖
 
@@ -70,14 +63,9 @@ python data_generator.py
 python feature_processor.py
 ```
 
-#### 3. 模型训练
+#### 3. 测试集预测
 ```bash
-python model_trainer.py
-```
-
-#### 4. 效果分析
-```bash
-python analyzer.py
+python predict_test.py
 ```
 
 ## 输出文件
@@ -91,13 +79,8 @@ xgb_demo/
 ├── models/
 │   ├── feature_processor.pkl      # 保存的特征处理器
 │   └── xgb_model.pkl              # 训练好的XGBoost模型
-└── results/
-    ├── feature_importance.png     # 特征重要性图
-    ├── roc_curve.png              # ROC曲线
-    ├── precision_recall_curve.png # PR曲线
-    ├── confusion_matrix.png       # 混淆矩阵
-    ├── prediction_distribution.png # 预测概率分布
-    └── data_exploration.png       # 数据探索分析
+└── test/
+    └── test_predictions.csv       # 测试集预测结果
 ```
 
 ## 数据说明

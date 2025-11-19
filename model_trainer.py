@@ -6,12 +6,17 @@ import pandas as pd
 import numpy as np
 import xgboost as xgb
 from xgboost import callback
-from sklearn.metrics import (accuracy_score, precision_score, recall_score, 
-                            f1_score, roc_auc_score, confusion_matrix,
-                            classification_report)
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    confusion_matrix,
+)
 import joblib
 import os
-from typing import Tuple, Dict, Any
+from typing import Dict, Any
 
 
 class ModelTrainer:
@@ -43,57 +48,33 @@ class ModelTrainer:
         self.params = params
         self.model = None
         self.feature_importance = None
-        self.threshold = 0.5  # 默认概率阈值为0.5
+        self.threshold = self.params.get("threshold", 0.5)
     
     def train(self, X_train: pd.DataFrame, y_train: pd.Series,
               X_val: pd.DataFrame = None, y_val: pd.Series = None,
               early_stopping_rounds: int = 10) -> 'ModelTrainer':
         """
         训练XGBoost模型
-        
+
         Args:
             X_train: 训练集特征
             y_train: 训练集标签
             X_val: 验证集特征（可选）
             y_val: 验证集标签（可选）
             early_stopping_rounds: 早停轮数
-            
+
         Returns:
             self
         """
         print("开始训练XGBoost模型...")
-        
-        # 准备验证集
-        eval_set = []
-        if X_val is not None and y_val is not None:
-            eval_set = [(X_val, y_val)]
-        
-        # 创建模型，如果有验证集则添加早停回调
-        if eval_set:
-            # 新版本XGBoost需要在初始化时传入callbacks参数
-            self.model = xgb.XGBClassifier(
-                **self.params,
-                callbacks=[callback.EarlyStopping(rounds=early_stopping_rounds)]
-            )
-        else:
-            self.model = xgb.XGBClassifier(**self.params)
-        
-        # 训练模型
-        if eval_set:
-            self.model.fit(
-                X_train, y_train,
-                eval_set=eval_set,
-                verbose=False
-            )
-        else:
-            self.model.fit(X_train, y_train)
-        
-        # 获取特征重要性
-        self.feature_importance = pd.DataFrame({
-            'feature': X_train.columns,
-            'importance': self.model.feature_importances_
-        }).sort_values('importance', ascending=False)
-        
+
+        self.model = self._build_model(use_valid=X_val is not None and y_val is not None,
+                                       early_stopping_rounds=early_stopping_rounds)
+        fit_kwargs = self._build_fit_kwargs(X_train, y_train, X_val, y_val)
+        self.model.fit(**fit_kwargs)
+
+        self._cache_feature_importance(X_train.columns)
+
         print("模型训练完成！")
         return self
     
@@ -108,31 +89,23 @@ class ModelTrainer:
         Returns:
             预测类别数组
         """
-        if self.model is None:
-            raise ValueError("模型尚未训练，请先调用train方法")
-        
-        # 如果指定了阈值，使用指定阈值；否则使用默认阈值
-        if threshold is None:
-            threshold = self.threshold
-        
-        # 获取预测概率
-        y_proba = self.model.predict_proba(X)[:, 1]
-        # 根据阈值转换为类别
-        return (y_proba >= threshold).astype(int)
+        self._ensure_trained()
+        used_threshold = threshold if threshold is not None else self.threshold
+        y_proba = self.predict_proba(X)
+        return (y_proba >= used_threshold).astype(int)
     
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
         """
-        预测概率
+        预测正类概率
         
         Args:
             X: 特征DataFrame
             
         Returns:
-            预测概率数组
+            正类概率一维数组
         """
-        if self.model is None:
-            raise ValueError("模型尚未训练，请先调用predict_proba方法")
-        return self.model.predict_proba(X)
+        self._ensure_trained()
+        return self.model.predict_proba(X)[:, 1]
     
     def evaluate(self, X: pd.DataFrame, y: pd.Series, threshold: float = None) -> Dict[str, float]:
         """
@@ -146,23 +119,17 @@ class ModelTrainer:
         Returns:
             评估指标字典
         """
-        if self.model is None:
-            raise ValueError("模型尚未训练，请先调用train方法")
-        
-        # 预测（使用指定阈值或默认阈值）
+        self._ensure_trained()
         y_pred = self.predict(X, threshold=threshold)
-        y_pred_proba = self.predict_proba(X)[:, 1]
-        
-        # 计算指标
-        metrics = {
+        y_pred_proba = self.predict_proba(X)
+
+        return {
             'accuracy': accuracy_score(y, y_pred),
             'precision': precision_score(y, y_pred, zero_division=0),
             'recall': recall_score(y, y_pred, zero_division=0),
             'f1_score': f1_score(y, y_pred, zero_division=0),
             'roc_auc': roc_auc_score(y, y_pred_proba),
         }
-        
-        return metrics
     
     def print_evaluation_report(self, X: pd.DataFrame, y: pd.Series, 
                                 dataset_name: str = "数据集", threshold: float = None):
@@ -196,14 +163,7 @@ class ModelTrainer:
         y_pred = self.predict(X, threshold=threshold)
         cm = confusion_matrix(y, y_pred)
         print(f"\n混淆矩阵:")
-        print(f"              预测")
-        print(f"           否    是")
-        print(f"实际 否  {cm[0,0]:5d}  {cm[0,1]:5d}")
-        print(f"     是  {cm[1,0]:5d}  {cm[1,1]:5d}")
-        
-        # 分类报告
-        print(f"\n详细分类报告:")
-        print(classification_report(y, y_pred, target_names=['未报名', '已报名'], zero_division=0))
+        print(cm)
     
     def set_threshold(self, threshold: float):
         """
@@ -269,28 +229,47 @@ class ModelTrainer:
         trainer.model = joblib.load(filepath)
         return trainer
 
+    def _ensure_trained(self) -> None:
+        """
+        确保模型已训练，避免误调用。
+        """
+        if self.model is None:
+            raise ValueError("模型尚未训练，请先调用train方法")
 
-if __name__ == '__main__':
-    # 测试模型训练器
-    from data_generator import generate_mock_data
-    from feature_processor import FeatureProcessor
-    
-    print("生成测试数据...")
-    df = generate_mock_data(n_samples=5000)
-    
-    print("\n处理特征...")
-    processor = FeatureProcessor()
-    X, y = processor.fit_transform(df)
-    X_train, X_test, y_train, y_test = processor.split_data(X, y)
-    
-    print("\n训练模型...")
-    trainer = ModelTrainer()
-    trainer.train(X_train, y_train, X_test, y_test)
-    
-    print("\n评估模型...")
-    trainer.print_evaluation_report(X_train, y_train, "训练集")
-    trainer.print_evaluation_report(X_test, y_test, "测试集")
-    
-    print("\n特征重要性（Top 10）:")
-    print(trainer.get_feature_importance(10))
+    def _build_model(self, use_valid: bool, early_stopping_rounds: int) -> xgb.XGBClassifier:
+        """
+        创建XGBoost模型实例，自动注入常用配置。
+        """
+        model_params = self.params.copy()
+        model_params.setdefault("enable_categorical", True)
+        model_params.setdefault("tree_method", "hist")
+        if use_valid:
+            model_params["callbacks"] = [
+                callback.EarlyStopping(rounds=early_stopping_rounds)
+            ]
+        return xgb.XGBClassifier(**model_params)
 
+    def _build_fit_kwargs(
+        self,
+        X_train: pd.DataFrame,
+        y_train: pd.Series,
+        X_val: pd.DataFrame | None,
+        y_val: pd.Series | None,
+    ) -> Dict[str, Any]:
+        """
+        根据是否提供验证集构建fit参数。
+        """
+        fit_kwargs: Dict[str, Any] = {"X": X_train, "y": y_train}
+        if X_val is not None and y_val is not None:
+            fit_kwargs["eval_set"] = [(X_val, y_val)]
+            fit_kwargs["verbose"] = False
+        return fit_kwargs
+
+    def _cache_feature_importance(self, feature_names: pd.Index) -> None:
+        """
+        快速缓存特征重要性，便于后续分析。
+        """
+        self.feature_importance = pd.DataFrame({
+            'feature': feature_names,
+            'importance': self.model.feature_importances_
+        }).sort_values('importance', ascending=False)
