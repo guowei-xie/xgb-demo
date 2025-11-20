@@ -51,7 +51,7 @@ LEVEL_TAG_RULES = [
     },
     {
         "label": "C",
-        "min_prob": 0.01,
+        "min_prob": 0.015,
         "max_prob": 0.03,
         "min_inclusive": False,
         "max_inclusive": True,
@@ -59,7 +59,7 @@ LEVEL_TAG_RULES = [
     {
         "label": "D",
         "min_prob": None,
-        "max_prob": 0.01,
+        "max_prob": 0.015,
         "min_inclusive": True,
         "max_inclusive": True,
     },
@@ -88,7 +88,7 @@ FEATURE_EXCLUDE_COLUMNS: list[str] = [
 ]
 
 # 模型参数（可按需调整）
-# 版本1 ROC-AUC: 0.7
+# 版本1 默认
 # MODEL_PARAMS = {
 #     "objective": "binary:logistic",
 #     "eval_metric": "auc",
@@ -104,21 +104,66 @@ FEATURE_EXCLUDE_COLUMNS: list[str] = [
 #     "random_state": 42,
 #     "n_jobs": -1,
 # }
-# 版本2 ROC-AUC: 0.73
+# # 版本2 AI建议
+# MODEL_PARAMS = {
+#     "objective": "binary:logistic",
+#     "eval_metric": "auc",
+#     "max_depth": 8,                    # 增加深度捕捉更复杂模式
+#     "learning_rate": 0.05,             # 降低学习率，更稳定
+#     "n_estimators": 500,               # 增加迭代次数
+#     "subsample": 0.9,                  # 增加样本使用率
+#     "colsample_bytree": 0.7,           # 减少特征使用，增加多样性
+#     "min_child_weight": 5,             # 加强防止过拟合
+#     "gamma": 0.2,                      # 增加分裂难度
+#     "reg_alpha": 0.05,                 # 减少L1约束
+#     "reg_lambda": 1.5,                 # 适当增加L2约束
+#     "random_state": 42,
+#     "n_jobs": -1,
+# }
+# 版本3 网格搜索
 MODEL_PARAMS = {
     "objective": "binary:logistic",
     "eval_metric": "auc",
-    "max_depth": 8,                    # 增加深度捕捉更复杂模式
-    "learning_rate": 0.05,             # 降低学习率，更稳定
-    "n_estimators": 500,               # 增加迭代次数
-    "subsample": 0.9,                  # 增加样本使用率
-    "colsample_bytree": 0.7,           # 减少特征使用，增加多样性
-    "min_child_weight": 5,             # 加强防止过拟合
-    "gamma": 0.2,                      # 增加分裂难度
-    "reg_alpha": 0.05,                 # 减少L1约束
-    "reg_lambda": 1.5,                 # 适当增加L2约束
+    "max_depth": 10,                   
+    "learning_rate": 0.01,             
+    "n_estimators": 300,               
+    "subsample": 0.9,
+    "colsample_bytree": 0.6, 
+    "min_child_weight": 7,            
+    "gamma": 0.5,                      
+    "reg_alpha": 0.1,                 
+    "reg_lambda": 3.0,                
     "random_state": 42,
     "n_jobs": -1,
 }
+
+# 超参数调优配置
+# 超参数搜索空间（用于随机搜索或网格搜索）
+HYPERPARAMETER_SEARCH_SPACE = {
+    "max_depth": [4, 6, 8, 10, 12],                    # 树的最大深度
+    "learning_rate": [0.01, 0.05, 0.1, 0.15, 0.2],    # 学习率
+    "n_estimators": [200, 300, 400, 500, 600],         # 树的数量
+    "subsample": [0.7, 0.8, 0.9, 1.0],                 # 样本采样比例
+    "colsample_bytree": [0.6, 0.7, 0.8, 0.9, 1.0],    # 特征采样比例
+    "min_child_weight": [1, 3, 5, 7, 10],              # 叶子节点最小权重
+    "gamma": [0, 0.1, 0.2, 0.3, 0.5],                  # 最小损失减少量
+    "reg_alpha": [0, 0.01, 0.05, 0.1, 0.2],            # L1正则化
+    "reg_lambda": [0.5, 1.0, 1.5, 2.0, 3.0],           # L2正则化
+}
+
+# 超参数调优方法配置
+HYPERPARAMETER_TUNING_CONFIG = {
+    "search_method": "random",          # 'random' 或 'grid'
+    "n_iter": 50,                       # 随机搜索迭代次数（仅random有效）
+    "cv": 5,                            # 交叉验证折数
+    "scoring": "roc_auc",               # 评分指标
+    "n_jobs": -1,                       # 并行任务数，-1表示使用所有CPU
+    "random_state": 42,                 # 随机种子
+    "verbose": 1,                       # 详细程度
+}
+
+# 超参数调优结果保存路径
+BEST_PARAMS_PATH = BASE_DIR / "models" / "best_params.pkl"
+CV_RESULTS_PATH = BASE_DIR / "results" / "cv_results.csv"
 
 
