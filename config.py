@@ -27,6 +27,8 @@ PREDICTION_LEVEL_ANALYSIS_FIG = BASE_DIR / "results" / "prediction_level_analysi
 PREDICTION_LEVEL_RATIO_FIG = BASE_DIR / "results" / "prediction_level_ratio.png"
 PREDICTION_TERM_TREND_FIG = BASE_DIR / "results" / "prediction_term_trend.png"
 FEATURE_IMPORTANCE_FIG = BASE_DIR / "results" / "feature_importance.png"
+
+# 等级标签区间配置
 LEVEL_TAG_RULES = [
     {
         "label": "S",
@@ -104,6 +106,7 @@ FEATURE_EXCLUDE_COLUMNS: list[str] = [
 #     "random_state": 42,
 #     "n_jobs": -1,
 # }
+
 # # 版本2 AI建议
 # MODEL_PARAMS = {
 #     "objective": "binary:logistic",
@@ -120,7 +123,8 @@ FEATURE_EXCLUDE_COLUMNS: list[str] = [
 #     "random_state": 42,
 #     "n_jobs": -1,
 # }
-# 版本3 网格搜索
+
+# 版本3 网格搜索最优
 MODEL_PARAMS = {
     "objective": "binary:logistic",
     "eval_metric": "auc",
@@ -166,4 +170,8 @@ HYPERPARAMETER_TUNING_CONFIG = {
 BEST_PARAMS_PATH = BASE_DIR / "models" / "best_params.pkl"
 CV_RESULTS_PATH = BASE_DIR / "results" / "cv_results.csv"
 
-
+# API服务配置
+API_HOST = "0.0.0.0"  # API服务监听地址
+API_PORT = 8000  # API服务端口
+API_RELOAD = True  # 是否启用自动重载（开发环境建议True，生产环境建议False）
+API_WORKERS = 4  # 工作进程数（生产环境可设置为CPU核心数）
