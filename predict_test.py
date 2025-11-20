@@ -8,10 +8,29 @@ import os
 from pathlib import Path
 import pandas as pd
 
-from feature_processor import FeatureProcessor
-from model_trainer import ModelTrainer
-from config import PROCESSOR_PATH, MODEL_PATH, TEST_PATH, PREDICTION_OUTPUT
-from pipeline_utils import load_dataset
+from utils.feature_processor import FeatureProcessor
+from utils.model_trainer import ModelTrainer
+from utils.level_tagger import assign_level_tags
+from utils.prediction_analysis import (
+    analyze_prediction_quality,
+    plot_level_performance_by_term,
+    plot_level_ratio_trend,
+    plot_term_renewal_trend,
+)
+from config import (
+    PROCESSOR_PATH,
+    MODEL_PATH,
+    TEST_PATH,
+    PREDICTION_OUTPUT,
+    TARGET_COLUMN,
+    PREDICTION_ANALYSIS_FIG,
+    LEVEL_TAG_RULES,
+    PREDICTION_LEVEL_ANALYSIS_FIG,
+    PREDICTION_LEVEL_RATIO_FIG,
+    PREDICTION_TERM_TREND_FIG,
+    TERM_COLUMN,
+)
+from utils.pipeline_utils import load_dataset
 
 
 def load_artifacts(processor_path: Path, model_path: Path) -> tuple[FeatureProcessor, ModelTrainer]:
@@ -35,7 +54,9 @@ def load_artifacts(processor_path: Path, model_path: Path) -> tuple[FeatureProce
     return processor, trainer
 
 
-def prepare_test_features(test_path: Path, processor: FeatureProcessor) -> tuple[pd.DataFrame, pd.DataFrame]:
+def prepare_test_features(
+    test_path: Path, processor: FeatureProcessor
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series | None]:
     """
     读取测试集并生成特征。
 
@@ -44,11 +65,12 @@ def prepare_test_features(test_path: Path, processor: FeatureProcessor) -> tuple
         processor: 已拟合的特征处理器。
 
     Returns:
-        (原始DataFrame, 特征DataFrame)。
+        (原始DataFrame, 特征DataFrame, 标签Series或None)。
     """
     test_df = load_dataset(test_path)
     features = processor.transform(test_df)
-    return test_df, features
+    labels = test_df[TARGET_COLUMN] if TARGET_COLUMN in test_df.columns else None
+    return test_df, features, labels
 
 
 def run_prediction(trainer: ModelTrainer, features: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
@@ -63,11 +85,13 @@ def run_prediction(trainer: ModelTrainer, features: pd.DataFrame) -> tuple[pd.Se
         (预测概率Series, 预测标签Series)。
     """
     proba = pd.Series(trainer.predict_proba(features), index=features.index, name="pred_probability")
-    labels = pd.Series(trainer.predict(features), index=features.index, name="pred_label")
-    return proba, labels
+    pred_labels = pd.Series(trainer.predict(features), index=features.index, name="pred_label")
+    return proba, pred_labels
 
 
-def save_predictions(test_df: pd.DataFrame, proba: pd.Series, labels: pd.Series, output_path: Path) -> None:
+def save_predictions(
+    test_df: pd.DataFrame, proba: pd.Series, labels: pd.Series, output_path: Path
+) -> pd.DataFrame:
     """
     合并预测结果并保存。
 
@@ -81,8 +105,11 @@ def save_predictions(test_df: pd.DataFrame, proba: pd.Series, labels: pd.Series,
     result_df = test_df.copy()
     result_df["pred_probability"] = proba
     result_df["pred_label"] = labels
+    level_tags = assign_level_tags(proba, LEVEL_TAG_RULES)
+    result_df["level_tag"] = level_tags
     result_df.to_csv(output_path, index=False)
     print(f"预测结果已保存到: {output_path}")
+    return result_df
 
 
 def main():
@@ -93,14 +120,54 @@ def main():
     processor, trainer = load_artifacts(PROCESSOR_PATH, MODEL_PATH)
 
     print("读取测试集并生成特征...")
-    test_df, features = prepare_test_features(TEST_PATH, processor)
+    test_df, features, true_labels = prepare_test_features(TEST_PATH, processor)
     print(f"测试集样本数: {len(test_df)}")
 
     print("执行预测...")
-    proba, labels = run_prediction(trainer, features)
+    proba, pred_labels = run_prediction(trainer, features)
 
     print("保存预测结果...")
-    save_predictions(test_df, proba, labels, PREDICTION_OUTPUT)
+    result_df = save_predictions(test_df, proba, pred_labels, PREDICTION_OUTPUT)
+
+    if true_labels is not None:
+        print("生成预测分析图...")
+        analyze_prediction_quality(
+            probabilities=proba,
+            labels=true_labels.loc[proba.index],
+            output_path=PREDICTION_ANALYSIS_FIG,
+            dataset_name="线上测试集",
+        )
+        if TERM_COLUMN in result_df.columns:
+            print("生成等级-学期散点图...")
+            plot_level_performance_by_term(
+                df=result_df,
+                term_col=TERM_COLUMN,
+                level_col="level_tag",
+                label_col=TARGET_COLUMN,
+                output_path=PREDICTION_LEVEL_ANALYSIS_FIG,
+                dataset_name="线上测试集",
+            )
+            print("生成等级占比趋势图...")
+            plot_level_ratio_trend(
+                df=result_df,
+                term_col=TERM_COLUMN,
+                level_col="level_tag",
+                output_path=PREDICTION_LEVEL_RATIO_FIG,
+                dataset_name="线上测试集",
+            )
+            print("生成学期续报率走势图...")
+            plot_term_renewal_trend(
+                df=result_df,
+                term_col=TERM_COLUMN,
+                prob_col="pred_probability",
+                label_col=TARGET_COLUMN,
+                output_path=PREDICTION_TERM_TREND_FIG,
+                dataset_name="线上测试集",
+            )
+        else:
+            print(f"⚠️ 数据缺少列 {TERM_COLUMN}，跳过等级-学期散点图。")
+    else:
+        print("⚠️ 测试集缺少实际续报标签，跳过效果分析。")
     print("全部流程完成！")
 
 

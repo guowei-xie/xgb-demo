@@ -3,20 +3,38 @@ XGBoost模型训练主程序
 演示完整的机器学习流程：数据读取 -> 特征处理 -> 模型训练 -> 效果分析
 """
 import os
-from feature_processor import FeatureProcessor
-from model_trainer import ModelTrainer
+import pandas as pd
+from utils.feature_processor import FeatureProcessor
+from utils.model_trainer import ModelTrainer
+from utils.level_tagger import assign_level_tags
+from utils.prediction_analysis import (
+    analyze_prediction_quality,
+    plot_level_performance_by_term,
+    plot_level_ratio_trend,
+    plot_term_renewal_trend,
+    plot_feature_importance,
+)
 from config import (
     DATA_PATH,
     PROCESSOR_PATH,
     MODEL_PATH,
     TARGET_COLUMN,
+    TERM_COLUMN,
     TEST_SIZE,
     RANDOM_STATE,
     MODEL_PARAMS,
     EARLY_STOPPING_ROUNDS,
     TRAIN_TEST_PREDICTIONS,
+    TRAIN_TEST_ANALYSIS_FIG,
+    TRAIN_TEST_LEVEL_ANALYSIS_FIG,
+    TRAIN_TEST_LEVEL_RATIO_FIG,
+    TRAIN_TEST_TERM_TREND_FIG,
+    FEATURE_IMPORTANCE_FIG,
+    LEVEL_TAG_RULES,
+    FEATURE_INCLUDE_COLUMNS,
+    FEATURE_EXCLUDE_COLUMNS,
 )
-from pipeline_utils import load_dataset, log_basic_stats, split_dataset
+from utils.pipeline_utils import load_dataset, log_basic_stats, split_dataset
 
 
 def main():
@@ -33,7 +51,10 @@ def main():
     # 步骤2: 特征处理
     print("\n【步骤2】特征处理与工程...")
     print("-" * 60)
-    processor = FeatureProcessor()
+    processor = FeatureProcessor(
+        include_columns=FEATURE_INCLUDE_COLUMNS,
+        exclude_columns=FEATURE_EXCLUDE_COLUMNS,
+    )
     X, y = processor.fit_transform(df, target_col=TARGET_COLUMN)
     print(f"✓ 特征处理完成")
     print(f"✓ 特征数量: {X.shape[1]}")
@@ -75,6 +96,17 @@ def main():
     print("\n特征重要性 Top 15:")
     print(trainer.get_feature_importance(15).to_string(index=False))
     
+    # 可视化特征重要性
+    print("\n【步骤4.5】生成特征重要性可视化...")
+    print("-" * 60)
+    feature_importance_df = trainer.get_feature_importance(top_n=30)
+    plot_feature_importance(
+        feature_importance_df=feature_importance_df,
+        output_path=FEATURE_IMPORTANCE_FIG,
+        top_n=30,
+        title="XGBoost模型特征重要性分析",
+    )
+    
     # 步骤5: 保存测试集预测结果
     print("\n【步骤5】保存测试集预测结果...")
     print("-" * 60)
@@ -91,12 +123,53 @@ def main():
     result_df = test_df_original.copy()
     result_df["pred_probability"] = y_test_proba
     result_df["pred_label"] = y_test_pred
+    result_df["level_tag"] = assign_level_tags(
+        result_df["pred_probability"],
+        LEVEL_TAG_RULES,
+    )
     
     # 保存到results目录
     os.makedirs(TRAIN_TEST_PREDICTIONS.parent, exist_ok=True)
     result_df.to_csv(TRAIN_TEST_PREDICTIONS, index=False)
     print(f"✓ 测试集预测结果已保存到: {TRAIN_TEST_PREDICTIONS}")
     print(f"  - 共 {len(result_df)} 条记录")
+
+    print("\n【步骤6】预测结果分析...")
+    print("-" * 60)
+    proba_series = pd.Series(y_test_proba, index=X_test.index, name="pred_probability")
+    y_test_aligned = y_test.loc[X_test.index]
+    analyze_prediction_quality(
+        probabilities=proba_series,
+        labels=y_test_aligned,
+        output_path=TRAIN_TEST_ANALYSIS_FIG,
+        dataset_name="验证集",
+    )
+    if TERM_COLUMN in result_df.columns:
+        plot_level_performance_by_term(
+            df=result_df,
+            term_col=TERM_COLUMN,
+            level_col="level_tag",
+            label_col=TARGET_COLUMN,
+            output_path=TRAIN_TEST_LEVEL_ANALYSIS_FIG,
+            dataset_name="验证集",
+        )
+        plot_level_ratio_trend(
+            df=result_df,
+            term_col=TERM_COLUMN,
+            level_col="level_tag",
+            output_path=TRAIN_TEST_LEVEL_RATIO_FIG,
+            dataset_name="验证集",
+        )
+        plot_term_renewal_trend(
+            df=result_df,
+            term_col=TERM_COLUMN,
+            prob_col="pred_probability",
+            label_col=TARGET_COLUMN,
+            output_path=TRAIN_TEST_TERM_TREND_FIG,
+            dataset_name="验证集",
+        )
+    else:
+        print(f"⚠️ 数据缺少列 {TERM_COLUMN}，跳过等级-学期散点图。")
     
     print("\n" + "="*60)
     print("模型训练流程完成！")
@@ -105,6 +178,12 @@ def main():
     print(f"  - 特征处理器: {PROCESSOR_PATH}")
     print(f"  - 训练模型: {MODEL_PATH}")
     print(f"  - 测试集预测结果: {TRAIN_TEST_PREDICTIONS}")
+    print(f"  - 预测概率分析图: {TRAIN_TEST_ANALYSIS_FIG}")
+    print(f"  - 等级-学期散点图: {TRAIN_TEST_LEVEL_ANALYSIS_FIG}")
+    print(f"  - 等级占比趋势图: {TRAIN_TEST_LEVEL_RATIO_FIG}")
+    print(f"  - 特征重要性图: {FEATURE_IMPORTANCE_FIG}")
+    if TERM_COLUMN in result_df.columns:
+        print(f"  - 学期续报率走势图: {TRAIN_TEST_TERM_TREND_FIG}")
     print("="*60)
 
 

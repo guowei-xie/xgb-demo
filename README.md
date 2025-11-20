@@ -7,9 +7,12 @@
 ```
 xgb_demo/
 ├── config.py              # 全局配置（路径、参数、阈值等）
-├── pipeline_utils.py      # 训练流程通用工具
-├── feature_processor.py   # 特征处理模块（数据预处理和特征工程）
-├── model_trainer.py       # 模型训练模块（XGBoost训练和评估）
+├── utils/                 # 通用工具与复用模块
+│   ├── pipeline_utils.py      # 训练流程通用工具
+│   ├── feature_processor.py   # 特征处理模块（数据预处理和特征工程）
+│   ├── model_trainer.py       # 模型训练模块（XGBoost训练和评估）
+│   ├── level_tagger.py        # 预测概率等级标签工具
+│   └── prediction_analysis.py # 预测结果分析模块
 ├── data_generator.py      # 可选：生成MOCK用户数据
 ├── main.py                # 主程序入口
 ├── predict_test.py        # 使用已训练模型对测试集推理
@@ -24,12 +27,13 @@ xgb_demo/
 - 特征包括：城市、年级、年龄、房价、收入、教育年限、家庭规模、是否有车、访问次数等
 - 标签：是否报名（基于特征的概率分布生成）
 
-### 2. 特征处理 (`feature_processor.py`)
+### 2. 特征处理 (`utils/feature_processor.py`)
 - 动态创建常用交互/非线性特征（如 `house_price_log`、完课/年级组合等）
 - 自动记录类别特征取值，并在推理阶段保持一致
 - 清理 inf 值，保留 NaN 以充分利用 XGBoost 对缺失的原生支持
+- 支持通过 `config.py` 中的 `FEATURE_INCLUDE_COLUMNS` / `FEATURE_EXCLUDE_COLUMNS` 对训练特征进行配置化管理
 
-### 3. 模型训练 (`model_trainer.py`)
+### 3. 模型训练 (`utils/model_trainer.py`)
 - XGBoost 二分类模型训练
 - 模型评估（准确率、精确率、召回率、F1分数、ROC-AUC）
 - 特征重要性分析
@@ -60,7 +64,7 @@ python data_generator.py
 
 #### 2. 特征处理
 ```bash
-python feature_processor.py
+python utils/feature_processor.py
 ```
 
 #### 3. 测试集预测

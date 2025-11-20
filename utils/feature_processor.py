@@ -3,23 +3,32 @@
 包含数据预处理、特征工程等功能
 适配实际数据：保留缺失值，XGBoost兼容的特征处理
 """
+from __future__ import annotations
 import pandas as pd
 import numpy as np
-from typing import Tuple, List
+from typing import Tuple, List, Sequence
 import joblib
 import os
+
+from config import FEATURE_INCLUDE_COLUMNS, FEATURE_EXCLUDE_COLUMNS
 
 
 class FeatureProcessor:
     """特征处理器类"""
     
-    def __init__(self):
+    def __init__(
+        self,
+        include_columns: Sequence[str] | None = FEATURE_INCLUDE_COLUMNS,
+        exclude_columns: Sequence[str] | None = FEATURE_EXCLUDE_COLUMNS,
+    ):
         """
         初始化特征处理器
         注意：XGBoost可以处理类别特征和缺失值，因此不需要标准化和编码
         """
         self.feature_columns: List[str] = []
         self.is_fitted = False
+        self.include_columns = list(include_columns) if include_columns is not None else None
+        self.additional_exclude = list(exclude_columns) if exclude_columns is not None else []
         # 保存类别特征的CategoricalDtype，用于确保训练和预测时使用相同的类别定义
         self.categorical_dtypes: dict = {}
     
@@ -90,10 +99,18 @@ class FeatureProcessor:
             'l1_term_name',   # 学期名称，非特征
             'l1_term_renewal_end_date'  # 日期字段，非特征
         ]
+        if self.additional_exclude:
+            exclude_cols.extend(self.additional_exclude)
         
         # 获取所有特征列
-        all_feature_cols = [col for col in df_processed.columns 
-                           if col not in exclude_cols]
+        if self.include_columns is not None:
+            available_cols = [col for col in self.include_columns if col in df_processed.columns]
+            missing_cols = [col for col in self.include_columns if col not in df_processed.columns]
+            if missing_cols:
+                print(f"⚠️ 配置的特征列在数据集中不存在: {', '.join(missing_cols)}")
+            all_feature_cols = [col for col in available_cols if col not in exclude_cols]
+        else:
+            all_feature_cols = [col for col in df_processed.columns if col not in exclude_cols]
         
         # 如果尚未拟合，保存特征列列表
         if not self.is_fitted:
