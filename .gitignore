@@ -41,3 +41,14 @@ results/
 .DS_Store
 Thumbs.db
 
+.Rproj.user
+
+# R
+.R
+.Rproj
+.Rhistory
+analysis.py
+temp/
+BTCRenewalPredict/
+.Rproj.user/
+Rplot.bmp

@@ -68,6 +68,11 @@ class FeatureProcessor:
                 'refresh_fns_interaction',
                 lambda data: data['refresh_num'] * data['fns_cnt'],
             ),
+            (
+                ['fns_cnt'],
+                'fns_cnt',
+                lambda data: np.where(data['fns_cnt'] >= 5, 4, data['fns_cnt'])
+            )
         ]
 
         for required_cols, new_col, builder in feature_recipes:

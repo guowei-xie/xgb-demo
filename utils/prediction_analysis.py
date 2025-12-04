@@ -290,6 +290,19 @@ def plot_level_performance_by_term(
 
     level_positions = {lvl: idx for idx, lvl in enumerate(levels)}
     agg_df["x_base"] = agg_df[level_col].map(level_positions).astype(float)
+    
+    summary_df = (
+        agg_df
+        .groupby("l1_term_name")
+        .apply(lambda g: g.assign(
+            续报率=g["renewal_rate"].round(4),
+            占比=(g["sample_count"] / g["sample_count"].sum()).round(4),
+            level_tag=pd.Categorical(g["level_tag"], categories=["S", "A", "B", "C", "D"], ordered=True)
+            ))
+        .reset_index(drop=True)
+        .pivot(index="l1_term_name", columns="level_tag", values=["续报率", "占比"])
+    )
+    summary_df.to_csv(output_path.with_suffix(".csv"))
 
     rng = np.random.default_rng(42)
     agg_df["x_jitter"] = agg_df["x_base"] + rng.normal(0, 0.08, size=len(agg_df))
