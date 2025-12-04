@@ -328,7 +328,7 @@ def plot_level_performance_by_term(
     level_summary["sample_ratio"] = level_summary["total_samples"] / max(total_samples, 1)
     level_summary["x"] = level_summary[level_col].map(level_positions)
     y_max_data = max(agg_df["renewal_rate"].max(), level_summary["weighted_rate"].max())
-    y_upper = min(1.05, y_max_data + 0.12)
+    y_upper = min(0.6, y_max_data + 0.12)
     ratio_label_y = y_upper - 0.02
     weighted_label_dx = 0.16
 

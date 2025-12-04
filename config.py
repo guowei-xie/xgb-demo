@@ -32,7 +32,7 @@ FEATURE_IMPORTANCE_FIG = BASE_DIR / "results" / "feature_importance.png"
 LEVEL_TAG_RULES = [
     {
         "label": "S",
-        "min_prob": 0.13,
+        "min_prob": 0.15,
         "max_prob": None,
         "min_inclusive": False,
         "max_inclusive": False,
@@ -40,28 +40,28 @@ LEVEL_TAG_RULES = [
     {
         "label": "A",
         "min_prob": 0.08,
-        "max_prob": 0.13,
+        "max_prob": 0.15,
         "min_inclusive": False,
         "max_inclusive": True,
     },
     {
         "label": "B",
-        "min_prob": 0.03,
+        "min_prob": 0.025,
         "max_prob": 0.08,
         "min_inclusive": False,
         "max_inclusive": True,
     },
     {
         "label": "C",
-        "min_prob": 0.015,
-        "max_prob": 0.03,
+        "min_prob": 0.011,
+        "max_prob": 0.025,
         "min_inclusive": False,
         "max_inclusive": True,
     },
     {
         "label": "D",
         "min_prob": None,
-        "max_prob": 0.015,
+        "max_prob": 0.011,
         "min_inclusive": True,
         "max_inclusive": True,
     },
@@ -128,15 +128,15 @@ FEATURE_EXCLUDE_COLUMNS: list[str] = [
 MODEL_PARAMS = {
     "objective": "binary:logistic",
     "eval_metric": "auc",
-    "max_depth": 10,                   
+    "max_depth": 8,                   
     "learning_rate": 0.01,             
-    "n_estimators": 300,               
-    "subsample": 0.9,
+    "n_estimators": 600,               
+    "subsample": 0.7,
     "colsample_bytree": 0.6, 
     "min_child_weight": 7,            
-    "gamma": 0.5,                      
-    "reg_alpha": 0.1,                 
-    "reg_lambda": 3.0,                
+    "gamma": 0.2,                      
+    "reg_alpha": 0.01,                 
+    "reg_lambda": 2.0,                
     "random_state": 42,
     "n_jobs": -1,
 }
@@ -165,6 +165,7 @@ HYPERPARAMETER_TUNING_CONFIG = {
     "random_state": 42,                 # 随机种子
     "verbose": 1,                       # 详细程度
 }
+
 
 # 超参数调优结果保存路径
 BEST_PARAMS_PATH = BASE_DIR / "models" / "best_params.pkl"
